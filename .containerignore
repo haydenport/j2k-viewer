@@ -1,0 +1,7 @@
+target
+dist
+.git
+*.png
+*.j2c
+*.jp2
+*.jph

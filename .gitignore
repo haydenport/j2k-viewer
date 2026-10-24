@@ -1,0 +1,8 @@
+/target
+/dist
+
+# Image data is test input, not a project asset.
+*.jph
+*.j2c
+*.jp2
+*.png

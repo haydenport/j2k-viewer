@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and release (e.g. v0.1.0)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x86_64, runner: windows-latest, os: windows, experimental: false }
+          - { name: linux-x86_64, runner: ubuntu-22.04, os: linux, experimental: false }
+          - { name: linux-aarch64, runner: ubuntu-24.04-arm, os: linux, experimental: false }
+          - { name: windows-aarch64, runner: windows-11-arm, os: windows, experimental: true }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - name: Check tag matches Cargo.toml version
+        shell: bash
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          ver=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -n1)
+          if [ "v$ver" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match workspace version v$ver in Cargo.toml"
+            exit 1
+          fi
+          echo "VERSION=$ver" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+      - name: Install Linux build libraries
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libxkbcommon-dev libwayland-dev libx11-dev libvulkan-dev
+      - run: cargo build --release --locked -p viewer -p tools
+      - name: Package
+        shell: bash
+        run: |
+          name="j2k-viewer-${VERSION}-${{ matrix.name }}"
+          mkdir -p "pkg/$name" out
+          if [ "${{ matrix.os }}" = windows ]; then
+            cp target/release/viewer.exe target/release/tools.exe "pkg/$name/"
+          else
+            cp target/release/viewer target/release/tools "pkg/$name/"
+          fi
+          cp LICENSE-MIT LICENSE-APACHE README.md "pkg/$name/"
+          if [ "${{ matrix.os }}" = windows ]; then
+            pwsh -NoProfile -Command "Compress-Archive -Path 'pkg/$name' -DestinationPath 'out/$name.zip'"
+          else
+            tar -C pkg -czf "out/$name.tar.gz" "$name"
+          fi
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: ${{ !cancelled() && needs.build.result != 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: package-*
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          cat > notes-header.md <<'EOF'
+          ## Install
+
+          Download the archive for your platform below, extract it and run `viewer` (`viewer.exe` on
+          Windows). See the README for controls and requirements. Linux needs a Vulkan driver
+          (`libvulkan1` plus a GPU driver, or `mesa-vulkan-drivers` for software rendering) and an
+          XDG desktop portal for the Open dialog. The Windows executable is unsigned, so SmartScreen
+          may warn on first run. Verify downloads against `SHA256SUMS.txt`.
+
+          ## Changes
+
+          EOF
+          flags=()
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" artifacts/* --title "$TAG" --verify-tag --generate-notes --notes-file notes-header.md "${flags[@]}"

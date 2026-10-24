@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/decoder", "crates/viewer", "crates/tools"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+# j2k-core is vendored only to raise its 512 MiB allocation cap (see vendor/j2k-core/src/buffer.rs).
+[patch.crates-io]
+j2k-core = { path = "vendor/j2k-core" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1

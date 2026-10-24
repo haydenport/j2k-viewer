@@ -1,0 +1,16 @@
+[package]
+name = "viewer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
+decoder = { path = "../decoder" }
+font8x8 = "0.3.1"
+memmap2 = "0.9.12"
+png = "0.18.1"
+pollster = "1.0.1"
+rfd = "0.17.2"
+wgpu = "30.0.1"
+winit = "0.30.13"

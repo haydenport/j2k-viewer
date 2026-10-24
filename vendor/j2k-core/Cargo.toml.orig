@@ -1,0 +1,33 @@
+[package]
+name        = "j2k-core"
+description = "Shared codec contracts and backend types for j2k"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace = true
+keywords.workspace     = true
+categories.workspace   = true
+readme                 = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+targets = []
+
+[lib]
+name = "j2k_core"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[lints.rust]
+# `GpuAbi` provides the shared host/device byte-view contract used by adapter
+# crates; every unsafe operation remains audited with `unsafe_op_in_unsafe_fn`.
+unsafe_code = "allow"
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "warn"
+
+[lints.clippy]
+pedantic                = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"

@@ -1,0 +1,11 @@
+[package]
+name = "tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+decoder = { path = "../decoder" }
+j2k = "0.12.0"
+openjph-core = "0.1.0"
+png = "0.18.1"
