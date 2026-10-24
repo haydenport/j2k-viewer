@@ -128,6 +128,9 @@ fn main() {
             }
             println!("{sw}x{sh} at ({x0},{y0}): {bad} differing pixels, max diff {max_diff}");
             println!("{}", if bad == 0 { "PASS: snapshot is pixel-identical to the source" } else { "FAIL" });
+            if bad != 0 {
+                std::process::exit(1);
+            }
         }
         Some("jlevels") => {
             // tools jlevels W H TILE REQ [rpcl]

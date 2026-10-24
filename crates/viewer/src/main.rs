@@ -302,6 +302,7 @@ fn run_snapshot(args: &Args, files: Vec<PathBuf>, index: usize) -> Result<(), St
     let mut viewer = Viewer::new(renderer, scheduler, files, index, size);
     viewer.adapter_name = name;
     viewer.overlay = args.overlay;
+    viewer.show_buttons = args.overlay;
     viewer.overlay_scale = if size.0 >= 2500 { 2 } else { 1 };
     if let Some(p) = args.prefetch {
         viewer.prefetch = p;

@@ -54,6 +54,8 @@ pub struct Viewer {
     pub overlay: bool,
     /// Pixel multiplier for overlay text.
     pub overlay_scale: u32,
+    /// Draw the on-screen buttons (off for offscreen snapshots unless --overlay is given).
+    pub show_buttons: bool,
     overlay_tile: Option<(Vec<String>, GpuTile)>,
     /// Button textures by label, normal and hovered.
     button_tiles: HashMap<(String, bool), GpuTile>,
@@ -130,6 +132,7 @@ impl Viewer {
             prefetch: 1,
             overlay: false,
             overlay_scale: 1,
+            show_buttons: true,
             overlay_tile: None,
             button_tiles: HashMap::new(),
             hover: None,
@@ -479,6 +482,9 @@ impl Viewer {
             });
         }
         for (i, b) in layout.buttons.iter().enumerate() {
+            if !self.show_buttons {
+                break;
+            }
             if let Some(tile) = self
                 .button_tiles
                 .get(&(b.label.clone(), self.hover == Some(i)))
