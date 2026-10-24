@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Cut a release: bump the version, test, commit, tag and push (the push starts the release workflow).
 
@@ -18,8 +18,10 @@ foreach ($d in "$env:USERPROFILE\.cargo\bin", 'C:\Program Files\Git\cmd', 'C:\Pr
 }
 
 function Run([string]$exe, [string[]]$a) {
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'   # native stderr is not an error
     & $exe @a
-    if ($LASTEXITCODE -ne 0) { throw "$exe $($a -join ' ') failed (exit $LASTEXITCODE)" }
+    $code = $LASTEXITCODE; $ErrorActionPreference = $old
+    if ($code -ne 0) { throw "$exe $($a -join ' ') failed (exit $code)" }
 }
 
 if ($Version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "Version must look like 1.2.3 or 1.2.3-rc1, got '$Version'" }
