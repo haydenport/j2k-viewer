@@ -1,6 +1,6 @@
 ﻿# Changelog
 
-## Unreleased
+## 0.2.0
 
 * Windows installer (`j2k-viewer-<version>-windows-<arch>-setup.exe`, built with Inno Setup by
   `scripts/build-installer.ps1` and by the release workflow): per-user install (no administrator
