@@ -6,3 +6,6 @@
 *.j2c
 *.jp2
 *.png
+
+# ...except the application icon, which is a project asset.
+!assets/*.png

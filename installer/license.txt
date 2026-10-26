@@ -1,0 +1,12 @@
+j2k viewer is free software, licensed under either of
+
+  * the Apache License, Version 2.0, or
+  * the MIT license
+
+at your option. Copyright (c) 2026 haydenport.
+
+The full texts are installed next to the program (LICENSE-APACHE and LICENSE-MIT) and are
+available at https://github.com/haydenport/j2k-viewer.
+
+This software is provided "as is", without warranty of any kind. It includes third-party
+open-source libraries, each under its own license.

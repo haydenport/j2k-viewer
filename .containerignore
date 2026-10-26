@@ -5,3 +5,4 @@ dist
 *.j2c
 *.jp2
 *.jph
+!assets/*.png

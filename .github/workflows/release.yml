@@ -24,10 +24,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: windows-x86_64, runner: windows-latest, os: windows, experimental: false }
-          - { name: linux-x86_64, runner: ubuntu-22.04, os: linux, experimental: false }
-          - { name: linux-aarch64, runner: ubuntu-24.04-arm, os: linux, experimental: false }
-          - { name: windows-aarch64, runner: windows-11-arm, os: windows, experimental: true }
+          - { name: windows-x86_64, runner: windows-latest, os: windows, arch: x86_64, experimental: false }
+          - { name: linux-x86_64, runner: ubuntu-22.04, os: linux, arch: x86_64, experimental: false }
+          - { name: linux-aarch64, runner: ubuntu-24.04-arm, os: linux, arch: aarch64, experimental: false }
+          - { name: windows-aarch64, runner: windows-11-arm, os: windows, arch: aarch64, experimental: true }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -75,6 +75,29 @@ jobs:
           name: package-${{ matrix.name }}
           path: out/*
           if-no-files-found: error
+      # Windows setup.exe (installer + uninstaller + file-type registration), built with Inno Setup
+      # from the binaries just compiled. For the best-effort ARM build this step may fail without
+      # blocking the release; for x86_64 a failure fails the job.
+      - name: Install Inno Setup if the runner lacks it
+        if: matrix.os == 'windows'
+        continue-on-error: ${{ matrix.experimental }}
+        shell: pwsh
+        run: |
+          $found = (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -or
+                   (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") -or
+                   (Test-Path "$env:ProgramFiles\Inno Setup 6\ISCC.exe")
+          if (-not $found) { choco install innosetup --no-progress -y; if ($LASTEXITCODE -ne 0) { throw 'choco install innosetup failed' } }
+      - name: Build Windows installer
+        if: matrix.os == 'windows'
+        continue-on-error: ${{ matrix.experimental }}
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -NoBuild -Arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'windows'
+        with:
+          name: package-installer-${{ matrix.name }}
+          path: dist/*-setup.exe
+          if-no-files-found: ${{ matrix.experimental && 'ignore' || 'error' }}
 
   release:
     needs: build
@@ -104,11 +127,18 @@ jobs:
           cat > notes-header.md <<'EOF'
           ## Install
 
-          Download the archive for your platform below, extract it and run `viewer` (`viewer.exe` on
-          Windows). See the README for controls and requirements. Linux needs a Vulkan driver
-          (`libvulkan1` plus a GPU driver, or `mesa-vulkan-drivers` for software rendering) and an
-          XDG desktop portal for the Open dialog. The Windows executable is unsigned, so SmartScreen
-          may warn on first run. Verify downloads against `SHA256SUMS.txt`.
+          **Windows:** download `j2k-viewer-<version>-windows-x86_64-setup.exe` and run it. It installs
+          for your user account only (no administrator prompt), adds a Start menu entry, and makes
+          j2k viewer available under "Open with" for JPEG 2000 files; Windows asks you to confirm
+          it as the default app. Uninstall it from Settings > Apps. A portable `.zip` (just extract and
+          run `viewer.exe`) is also provided. The ARM64 files are best-effort.
+
+          **Linux:** download the `.tar.gz` for your CPU, extract it and run `./viewer`. It needs a
+          Vulkan driver (`libvulkan1` plus a GPU driver, or `mesa-vulkan-drivers` for software
+          rendering) and an XDG desktop portal for the Open dialog.
+
+          The Windows programs are unsigned, so SmartScreen may warn on first run. Verify downloads
+          against `SHA256SUMS.txt`. See the README for controls and requirements.
 
           ## Changes
 

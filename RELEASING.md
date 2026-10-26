@@ -3,13 +3,16 @@
 Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a `v*` tag is pushed.
 It builds Windows x86_64, Linux x86_64 (on Ubuntu 22.04 for older glibc), Linux aarch64 and a
 best-effort Windows aarch64 build (allowed to fail without blocking the release), packages them as
-`j2k-viewer-<version>-<os>-<arch>.zip` / `.tar.gz`, writes `SHA256SUMS.txt` and creates the GitHub
-Release. Tags with a hyphen (e.g. `v0.2.0-rc1`) are marked pre-release.
+`j2k-viewer-<version>-<os>-<arch>.zip` / `.tar.gz`, builds the Windows installers
+(`j2k-viewer-<version>-windows-<arch>-setup.exe`, with Inno Setup via `scripts/build-installer.ps1`),
+writes `SHA256SUMS.txt` and creates the GitHub Release. Tags with a hyphen (e.g. `v0.2.0-rc1`) are
+marked pre-release. To build the installer locally: `scripts/build-installer.ps1`.
 
 ## Steps
 
 1. Land everything on `main` and make sure CI is green.
-2. Add a `## 0.2.0` section to `CHANGELOG.md` and commit it.
+2. In `CHANGELOG.md` rename the `## Unreleased` heading to `## 0.2.0` (or add that section) and
+   commit it.
 3. From a clean `main` checkout run (PowerShell):
 
    ```

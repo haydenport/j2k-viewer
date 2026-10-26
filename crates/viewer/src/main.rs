@@ -26,6 +26,22 @@ use renderer::{Renderer, SNAPSHOT_FORMAT};
 use scheduler::Scheduler;
 use viewer::{UiAction, Viewer};
 
+/// The application icon for the window and taskbar. On Windows the same icon is also embedded in
+/// the executable (see `build.rs`); this covers X11 and other platforms.
+fn window_icon() -> Option<winit::window::Icon> {
+    static ICON_PNG: &[u8] = include_bytes!("../../../assets/icon-256.png");
+    let mut reader = png::Decoder::new(std::io::Cursor::new(ICON_PNG))
+        .read_info()
+        .ok()?;
+    let mut rgba = vec![0u8; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut rgba).ok()?;
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    rgba.truncate(info.buffer_size());
+    winit::window::Icon::from_rgba(rgba, info.width, info.height).ok()
+}
+
 /// Messages from other threads to the window's event loop.
 enum AppEvent {
     /// A decode worker finished a tile.
@@ -401,6 +417,7 @@ impl App {
     fn init(&mut self, el: &ActiveEventLoop) -> Result<(), String> {
         let attrs = Window::default_attributes()
             .with_title("j2k viewer")
+            .with_window_icon(window_icon())
             .with_inner_size(LogicalSize::new(1600.0, 900.0));
         let window = Arc::new(el.create_window(attrs).map_err(|e| e.to_string())?);
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
