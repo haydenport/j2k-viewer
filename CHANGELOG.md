@@ -1,6 +1,6 @@
 ﻿# Changelog
 
-## Unreleased
+## 0.3.0
 
 * New **Image info** panel (`I`, or Menu > Image info): resolution, components and bit depth, JP2
   wrapper or raw codestream, HTJ2K vs classic JPEG 2000, wavelet and quantization, levels, layers,
