@@ -4,7 +4,7 @@ members = ["crates/decoder", "crates/viewer", "crates/tools"]
 
 [workspace.package]
 edition = "2021"
-version = "0.2.0"
+version = "0.3.0"
 license = "MIT OR Apache-2.0"
 
 # j2k-core is vendored only to raise its 512 MiB allocation cap (see vendor/j2k-core/src/buffer.rs).

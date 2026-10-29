@@ -361,7 +361,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "decoder"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "j2k",
  "memmap2",
@@ -2039,7 +2039,7 @@ checksum = "06bdbd8cfc056b8d2e2e85f29b56a3bdbecb527cef81eb39e3e7b98af4652770"
 
 [[package]]
 name = "tools"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "decoder",
  "j2k",
@@ -2095,7 +2095,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viewer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "decoder",
