@@ -57,18 +57,38 @@ Opening a file makes its folder the layer list; a folder opens directly.
 | `+` / `-` | zoom |
 | `O` | open a file (its folder becomes the layer list) |
 | `Shift+O` | pick a folder directly |
-| `I` | toggle the status / debug panel |
+| `I` | toggle the **image info** panel (see below) |
+| `D` | toggle the debug statistics panel (cache, decode times, frame time) |
 | `Esc` | quit |
 | Mouse wheel | zoom at the cursor |
 | Left-drag, or hold the middle (wheel) button | pan |
-| Menu button (top right) | Open, and debug info |
+| Menu button (top right) | Open, image info, debug stats |
 | Drop a file or folder on the window | open it |
+
+### Image info panel
+
+Press `I` (or Menu > Image info) to show facts about the current file, read from its headers (it
+reads the structure only, so it is quick even for huge files, and it runs in the background):
+
+* the file: JP2 wrapper and brand, or a raw codestream; file size; resolution, components and bit
+  depth; colour space
+* the codec: **HTJ2K (Part 15)** or classic JPEG 2000 Part 1; wavelet (5/3 reversible lossless or
+  9/7 lossy); quantization; decomposition levels, quality layers and progression order
+* the layout: tile grid and tile size, number of tile-parts, code-block size, precincts
+* optional markers: **TLM** (tile-part lengths), **PLM** and **PLT** (packet lengths), PPM/PPT, SOP,
+  EPH, MCT, and any other markers present (CAP, POC, RGN, ...)
+* the bit rate and compression ratio, any encoder comment (often names the encoder), and a one-line
+  verdict on how well the layout suits the viewer's decode-only-what-is-visible approach (for example
+  "poor: one tile, no precincts" or "good: tiled with resolution levels")
+
+`tools info <file>...` prints the same text on the command line.
 
 ### Other modes
 
 ```
 viewer --snapshot out.png --zoom 1 --at 23552,19688 file.j2c   # offscreen render, no window
 viewer --bench <folder> [--steps N --pan N --cache-mb N]        # layer step / pan / cache benchmark
+tools info <file>...                                             # the image info panel's text, for any files
 tools bench|verify|encode|check|mktest|cmp-snapshot ...          # decoder benchmarks and checks
 ```
 

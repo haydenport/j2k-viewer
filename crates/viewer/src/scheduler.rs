@@ -33,10 +33,13 @@ struct Queue {
     shutdown: bool,
 }
 
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
 pub struct Scheduler {
     shared: Arc<(Mutex<Queue>, Condvar)>,
     results: Receiver<Decoded>,
     threads: Vec<JoinHandle<()>>,
+    waker: Waker,
 }
 
 impl Scheduler {
@@ -44,7 +47,7 @@ impl Scheduler {
     pub fn new(workers: usize, wake: impl Fn() + Send + Sync + 'static) -> Self {
         let shared = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let (tx, results) = channel();
-        let wake = Arc::new(wake);
+        let wake: Waker = Arc::new(wake);
         let threads = (0..workers.max(1))
             .map(|i| {
                 let (shared, tx, wake) = (shared.clone(), tx.clone(), wake.clone());
@@ -58,7 +61,14 @@ impl Scheduler {
             shared,
             results,
             threads,
+            waker: wake,
         }
+    }
+
+    /// The callback that asks the UI thread to redraw; other background work (such as the image
+    /// info scan) uses it to announce its result.
+    pub fn waker(&self) -> Waker {
+        self.waker.clone()
     }
 
     /// Replace everything not yet started with `wanted` (highest priority first). Tiles already in

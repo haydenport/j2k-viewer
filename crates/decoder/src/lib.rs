@@ -1,5 +1,11 @@
 //! Decoder abstraction so HTJ2K backends can be swapped, plus the `j2k` (pure Rust, CPU) backend.
 
+mod inspect;
+
+pub use inspect::{
+    inspect, Cod, Colour, Component, Container, Inspection, Jp2Info, Markers, Qcd, TileParts,
+};
+
 use std::fs::File;
 use std::path::Path;
 
@@ -63,6 +69,12 @@ impl J2kFile {
         self.map.len()
     }
 
+    /// Describe the file's container, markers and tile layout. Walks every tile-part header, so it
+    /// touches the whole file; call it off the UI thread.
+    pub fn inspect(&self) -> Result<Inspection, String> {
+        inspect(&self.map)
+    }
+
     fn codestream(&self) -> &[u8] {
         &self.map[self.offset..]
     }
@@ -117,6 +129,39 @@ impl TileDecoder for J2kFile {
         .map_err(|e| e.to_string())?;
         Ok(Gray8Buf { w: ow, h: oh, data })
     }
+}
+
+/// Wrap a raw 8-bit grayscale codestream in the JP2 file format, with the same box layout as common
+/// encoders: signature, `ftyp` (jp2), `jp2h` {`ihdr`, `colr` greyscale}, `jp2c`.
+pub fn wrap_jp2(codestream: &[u8], w: u32, h: u32) -> Vec<u8> {
+    let mut v = Vec::with_capacity(codestream.len() + 100);
+    v.extend_from_slice(&[0, 0, 0, 12, b'j', b'P', b' ', b' ', 0x0D, 0x0A, 0x87, 0x0A]);
+    v.extend_from_slice(&[
+        0, 0, 0, 20, b'f', b't', b'y', b'p', b'j', b'p', b'2', b' ', 0, 0, 0, 0, b'j', b'p', b'2',
+        b' ',
+    ]);
+    v.extend_from_slice(&45u32.to_be_bytes()); // jp2h = 8 + ihdr 22 + colr 15
+    v.extend_from_slice(b"jp2h");
+    v.extend_from_slice(&22u32.to_be_bytes());
+    v.extend_from_slice(b"ihdr");
+    v.extend_from_slice(&h.to_be_bytes());
+    v.extend_from_slice(&w.to_be_bytes());
+    v.extend_from_slice(&[0, 1, 7, 7, 0, 0]); // 1 component, 8-bit unsigned, codec 7, no IPR
+    v.extend_from_slice(&15u32.to_be_bytes());
+    v.extend_from_slice(b"colr");
+    v.extend_from_slice(&[1, 0, 0]); // enumerated colour space
+    v.extend_from_slice(&17u32.to_be_bytes()); // greyscale
+    let len = codestream.len() as u64 + 8;
+    if len <= u64::from(u32::MAX) {
+        v.extend_from_slice(&(len as u32).to_be_bytes());
+        v.extend_from_slice(b"jp2c");
+    } else {
+        v.extend_from_slice(&1u32.to_be_bytes());
+        v.extend_from_slice(b"jp2c");
+        v.extend_from_slice(&(len + 8).to_be_bytes());
+    }
+    v.extend_from_slice(codestream);
+    v
 }
 
 /// Offset of the raw codestream: 0 for a bare `.j2c`, else the payload of the `jp2c` box.

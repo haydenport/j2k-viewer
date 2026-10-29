@@ -1,5 +1,17 @@
 ﻿# Changelog
 
+## Unreleased
+
+* New **Image info** panel (`I`, or Menu > Image info): resolution, components and bit depth, JP2
+  wrapper or raw codestream, HTJ2K vs classic JPEG 2000, wavelet and quantization, levels, layers,
+  progression order, tile grid, tile-parts, code-blocks, precincts, whether the optional TLM, PLM,
+  PLT, PPM/PPT, SOP, EPH, CAP and other markers are present, bit rate, encoder comment, and a verdict
+  on random-access friendliness. It is read from the file headers on a background thread.
+* The debug statistics panel is now toggled with `D` (previously `I`) and listed in the menu as
+  "Debug stats". The two panels can be shown together.
+* `tools info <file>...` prints the same description on the command line. The new `--info` snapshot
+  flag renders the panel offscreen.
+
 ## 0.2.0
 
 * Windows installer (`j2k-viewer-<version>-windows-<arch>-setup.exe`, built with Inno Setup by

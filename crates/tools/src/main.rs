@@ -26,6 +26,34 @@ fn main() {
             let (w, h, tile, levels) = (n(args.next()), n(args.next()), n(args.next()), n(args.next()));
             interop(w, h, tile, levels);
         }
+        Some("info") => {
+            // tools info <file>...: what the viewer's Image info panel shows, for any number of files.
+            let paths: Vec<String> = args.collect();
+            if paths.is_empty() {
+                eprintln!("usage: tools info <file>...");
+                std::process::exit(2);
+            }
+            let mut failed = false;
+            for (n, path) in paths.iter().enumerate() {
+                if n > 0 {
+                    println!();
+                }
+                println!("== {path}");
+                match std::fs::read(path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|b| decoder::inspect(&b))
+                {
+                    Ok(i) => i.lines().iter().for_each(|l| println!("{l}")),
+                    Err(e) => {
+                        println!("error: {e}");
+                        failed = true;
+                    }
+                }
+            }
+            if failed {
+                std::process::exit(1);
+            }
+        }
         Some("scan") => {
             // tools scan <file>: main-header markers and tile-part layout.
             let path = args.next().expect("file");
@@ -211,7 +239,7 @@ fn encode_streaming(png_path: &str, out_path: &str) {
     let cod = cs.windows(2).position(|m| m == [0xFF, 0x52]).expect("COD");
     assert_eq!(cs[cod + 9], 5, "encoder reduced the wavelet levels");
     let out = if out_path.to_ascii_lowercase().ends_with(".jp2") {
-        wrap_jp2(&cs, w, h)
+        decoder::wrap_jp2(&cs, w, h)
     } else {
         cs
     };
@@ -235,39 +263,6 @@ fn choose_tile(w: u32, h: u32) -> u32 {
         .into_iter()
         .find(|&t| ok(w, t) && ok(h, t))
         .unwrap_or(1024)
-}
-
-/// Wrap a raw codestream in the JP2 file format, with the same box layout as your existing
-/// `.jp2` files: signature, `ftyp` (jp2), `jp2h` {`ihdr`, `colr` greyscale}, `jp2c`.
-fn wrap_jp2(codestream: &[u8], w: u32, h: u32) -> Vec<u8> {
-    let mut v = Vec::with_capacity(codestream.len() + 100);
-    v.extend_from_slice(&[0, 0, 0, 12, b'j', b'P', b' ', b' ', 0x0D, 0x0A, 0x87, 0x0A]);
-    v.extend_from_slice(&[
-        0, 0, 0, 20, b'f', b't', b'y', b'p', b'j', b'p', b'2', b' ', 0, 0, 0, 0, b'j', b'p', b'2',
-        b' ',
-    ]);
-    v.extend_from_slice(&45u32.to_be_bytes()); // jp2h = 8 + ihdr 22 + colr 15
-    v.extend_from_slice(b"jp2h");
-    v.extend_from_slice(&22u32.to_be_bytes());
-    v.extend_from_slice(b"ihdr");
-    v.extend_from_slice(&h.to_be_bytes());
-    v.extend_from_slice(&w.to_be_bytes());
-    v.extend_from_slice(&[0, 1, 7, 7, 0, 0]); // 1 component, 8-bit unsigned, codec 7, no IPR
-    v.extend_from_slice(&15u32.to_be_bytes());
-    v.extend_from_slice(b"colr");
-    v.extend_from_slice(&[1, 0, 0]); // enumerated colour space
-    v.extend_from_slice(&17u32.to_be_bytes()); // greyscale
-    let len = codestream.len() as u64 + 8;
-    if len <= u64::from(u32::MAX) {
-        v.extend_from_slice(&(len as u32).to_be_bytes());
-        v.extend_from_slice(b"jp2c");
-    } else {
-        v.extend_from_slice(&1u32.to_be_bytes());
-        v.extend_from_slice(b"jp2c");
-        v.extend_from_slice(&(len + 8).to_be_bytes());
-    }
-    v.extend_from_slice(codestream);
-    v
 }
 
 /// Encode a synthetic image with openjph-core and decode with j2k: `tools interop W H TILE LEVELS`.

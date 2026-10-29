@@ -2,14 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
 
-use decoder::{J2kFile, TileDecoder};
+use decoder::{Inspection, J2kFile, TileDecoder};
 
 use crate::overlay;
 use crate::renderer::{GpuTile, Quad, Renderer};
-use crate::scheduler::{Job, Scheduler};
+use crate::scheduler::{Job, Scheduler, Waker};
 use crate::view::{
     all_tiles, level_for_scale, overview_level, tile_image_rect, visible_tiles, Camera, TileKey,
 };
@@ -26,11 +27,24 @@ struct Cached {
     last_used: u64,
 }
 
+/// The file-structure scan behind the Image info panel. It reads every tile-part header, which can
+/// touch a whole large file, so it runs on its own thread and only when the panel is shown.
+enum InfoState {
+    Idle,
+    Pending,
+    Ready(Box<Inspection>),
+    Failed(String),
+}
+
 struct Layer {
     file: Arc<J2kFile>,
     overview: u8,
     tiles: HashMap<TileKey, Cached>,
+    info: InfoState,
 }
+
+/// Longest line the info panel shows before cutting it with "...".
+const INFO_COLUMNS: usize = 62;
 
 pub struct Viewer {
     pub renderer: Renderer,
@@ -50,13 +64,20 @@ pub struct Viewer {
     unmet: usize,
     /// Prefetch this many layers on each side of the current one.
     pub prefetch: usize,
-    /// Draw the status panel.
+    /// Draw the debug statistics panel.
     pub overlay: bool,
+    /// Draw the image information panel (resolution, tiles, codec, markers, ...).
+    pub info_panel: bool,
     /// Pixel multiplier for overlay text.
     pub overlay_scale: u32,
     /// Draw the on-screen buttons (off for offscreen snapshots unless --overlay is given).
     pub show_buttons: bool,
     overlay_tile: Option<(Vec<String>, GpuTile)>,
+    info_tile: Option<(Vec<String>, GpuTile)>,
+    /// Finished file-structure scans, keyed by the address of the scanned file's `Arc`.
+    info_tx: Sender<(usize, Result<Inspection, String>)>,
+    info_rx: Receiver<(usize, Result<Inspection, String>)>,
+    waker: Waker,
     /// Button textures by label, normal and hovered.
     button_tiles: HashMap<(String, bool), GpuTile>,
     /// Index into this frame's button list.
@@ -73,6 +94,9 @@ pub enum UiAction {
     /// Pick an image; the other images in its folder become the layer list.
     OpenFile,
     ToggleMenu,
+    /// Show or hide the image information panel.
+    ToggleInfo,
+    /// Show or hide the debug statistics panel.
     ToggleDebug,
 }
 
@@ -84,8 +108,10 @@ struct Btn {
 }
 
 struct Layout {
-    /// Top-left of the status/welcome panel, if it is shown.
+    /// Top-left of the debug statistics / welcome panel, if it is shown.
     panel_origin: Option<(f32, f32)>,
+    /// Top-left of the image information panel, if it is shown.
+    info_origin: Option<(f32, f32)>,
     buttons: Vec<Btn>,
 }
 
@@ -109,6 +135,8 @@ impl Viewer {
         viewport: (u32, u32),
     ) -> Self {
         let (vw, vh) = (f64::from(viewport.0.max(1)), f64::from(viewport.1.max(1)));
+        let (info_tx, info_rx) = channel();
+        let waker = scheduler.waker();
         let mut v = Self {
             renderer,
             scheduler,
@@ -131,9 +159,14 @@ impl Viewer {
             unmet: 0,
             prefetch: 1,
             overlay: false,
+            info_panel: false,
             overlay_scale: 1,
             show_buttons: true,
             overlay_tile: None,
+            info_tile: None,
+            info_tx,
+            info_rx,
+            waker,
             button_tiles: HashMap::new(),
             hover: None,
             menu_open: false,
@@ -181,6 +214,7 @@ impl Viewer {
                         file: Arc::new(file),
                         overview,
                         tiles: HashMap::new(),
+                        info: InfoState::Idle,
                     },
                 );
                 true
@@ -341,6 +375,7 @@ impl Viewer {
                 }
             }
         }
+        self.poll_info();
         if self.dirty {
             self.dirty = false;
             self.plan();
@@ -351,9 +386,57 @@ impl Viewer {
         more
     }
 
+    /// Collect finished file-structure scans and start one for the current layer if the info panel
+    /// needs it.
+    fn poll_info(&mut self) {
+        while let Ok((key, result)) = self.info_rx.try_recv() {
+            if let Some(layer) = self
+                .layers
+                .values_mut()
+                .find(|l| Arc::as_ptr(&l.file) as usize == key)
+            {
+                layer.info = match result {
+                    Ok(i) => InfoState::Ready(Box::new(i)),
+                    Err(e) => InfoState::Failed(e),
+                };
+            }
+        }
+        if !self.info_panel {
+            return;
+        }
+        let Some(layer) = self.layers.get_mut(&self.cur) else {
+            return;
+        };
+        if !matches!(layer.info, InfoState::Idle) {
+            return;
+        }
+        layer.info = InfoState::Pending;
+        let (file, tx, wake) = (layer.file.clone(), self.info_tx.clone(), self.waker.clone());
+        let key = Arc::as_ptr(&file) as usize;
+        let spawned = std::thread::Builder::new()
+            .name("inspect".into())
+            .spawn(move || {
+                let _ = tx.send((key, file.inspect()));
+                wake();
+            });
+        if spawned.is_err() {
+            // Could not start a thread: show that instead of waiting forever.
+            layer.info = InfoState::Failed("could not start the scan thread".into());
+        }
+    }
+
     /// Every wanted tile (current layer and prefetch) is resident or failed, and nothing is decoding.
     pub fn is_settled(&self) -> bool {
-        self.unmet == 0 && self.scheduler.outstanding() == 0 && !self.dirty
+        self.unmet == 0 && self.scheduler.outstanding() == 0 && !self.dirty && !self.info_pending()
+    }
+
+    /// The info panel is on and the current layer's file-structure scan has not finished.
+    pub fn info_pending(&self) -> bool {
+        self.info_panel
+            && self
+                .layers
+                .get(&self.cur)
+                .is_some_and(|l| matches!(l.info, InfoState::Idle | InfoState::Pending))
     }
 
     fn plan(&mut self) {
@@ -462,6 +545,7 @@ impl Viewer {
     fn with_quads<R>(&mut self, f: impl FnOnce(&mut Renderer, &[Quad], bool) -> R) -> R {
         let (rects, nearest) = self.draw_list();
         self.refresh_overlay();
+        self.refresh_info();
         let layout = self.layout();
         self.ensure_button_tiles(&layout);
         let layer = self.layers.get(&self.cur);
@@ -476,6 +560,12 @@ impl Viewer {
             None => Vec::new(),
         };
         if let (Some((x, y)), Some((_, tile))) = (layout.panel_origin, &self.overlay_tile) {
+            quads.push(Quad {
+                rect: [x, y, x + tile.w as f32, y + tile.h as f32],
+                tile,
+            });
+        }
+        if let (Some((x, y)), Some((_, tile))) = (layout.info_origin, &self.info_tile) {
             quads.push(Quad {
                 rect: [x, y, x + tile.w as f32, y + tile.h as f32],
                 tile,
@@ -528,11 +618,16 @@ impl Viewer {
             mh,
         );
         if self.menu_open {
+            let tick = |on: bool| if on { 'x' } else { ' ' };
             let items = [
-                (UiAction::OpenFile, "Open image...  (O)".to_string()),
+                (UiAction::OpenFile, "Open image...   (O)".to_string()),
+                (
+                    UiAction::ToggleInfo,
+                    format!("[{}] Image info    (I)", tick(self.info_panel)),
+                ),
                 (
                     UiAction::ToggleDebug,
-                    format!("[{}] Debug info  (I)", if self.overlay { 'x' } else { ' ' }),
+                    format!("[{}] Debug stats   (D)", tick(self.overlay)),
                 ),
             ];
             let chars = items.iter().map(|i| i.1.chars().count()).max().unwrap_or(0);
@@ -562,11 +657,24 @@ impl Viewer {
             );
             Layout {
                 panel_origin: Some((((vw - pw) / 2.0).max(0.0).round(), top.round())),
+                info_origin: None,
                 buttons,
             }
         } else {
+            // Left column: image info on top, debug statistics underneath it.
+            let info_h = if self.info_panel {
+                overlay::text_size(&self.info_lines(), s).1 as f32
+            } else {
+                0.0
+            };
+            let debug_y = if self.info_panel {
+                m + info_h + 8.0 * sf
+            } else {
+                m
+            };
             Layout {
-                panel_origin: self.overlay.then_some((m, m)),
+                panel_origin: self.overlay.then_some((m, debug_y)),
+                info_origin: self.info_panel.then_some((m, m)),
                 buttons,
             }
         }
@@ -595,6 +703,11 @@ impl Viewer {
         match action {
             UiAction::ToggleMenu => {
                 self.menu_open = !self.menu_open;
+                None
+            }
+            UiAction::ToggleInfo => {
+                self.info_panel = !self.info_panel;
+                self.menu_open = false;
                 None
             }
             UiAction::ToggleDebug => {
@@ -667,6 +780,46 @@ impl Viewer {
             .renderer
             .upload(&overlay::render_text(&lines, self.overlay_scale.max(1)));
         self.overlay_tile = Some((lines, tile));
+    }
+
+    /// Re-render the image info panel texture only when its text changed.
+    fn refresh_info(&mut self) {
+        if !self.info_panel || self.is_empty_state() {
+            return;
+        }
+        let lines = self.info_lines();
+        if self
+            .info_tile
+            .as_ref()
+            .is_some_and(|(old, _)| *old == lines)
+        {
+            return;
+        }
+        let tile = self
+            .renderer
+            .upload(&overlay::render_text(&lines, self.overlay_scale.max(1)));
+        self.info_tile = Some((lines, tile));
+    }
+
+    /// Text for the image information panel: what the file *is* (not how the viewer is doing).
+    pub fn info_lines(&self) -> Vec<String> {
+        let mut v = vec![format!(
+            "{}  [{}/{}]",
+            self.current_name(),
+            self.cur + 1,
+            self.files.len()
+        )];
+        match self.layers.get(&self.cur).map(|l| &l.info) {
+            Some(InfoState::Ready(i)) => v.extend(i.lines()),
+            Some(InfoState::Failed(e)) => v.push(format!("Could not read the file layout: {e}")),
+            _ => v.push("Reading file structure...".to_string()),
+        }
+        for line in &mut v {
+            if line.chars().count() > INFO_COLUMNS {
+                *line = line.chars().take(INFO_COLUMNS - 3).collect::<String>() + "...";
+            }
+        }
+        v
     }
 
     /// Text for the status panel.
