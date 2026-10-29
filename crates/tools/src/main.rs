@@ -26,6 +26,69 @@ fn main() {
             let (w, h, tile, levels) = (n(args.next()), n(args.next()), n(args.next()), n(args.next()));
             interop(w, h, tile, levels);
         }
+        Some("meta") => {
+            // tools meta [--json] <file>...: embedded XMP metadata (same text as the viewer's panel).
+            let mut json = false;
+            let mut paths = Vec::new();
+            for a in args {
+                if a == "--json" {
+                    json = true;
+                } else {
+                    paths.push(a);
+                }
+            }
+            if paths.is_empty() {
+                eprintln!("usage: tools meta [--json] <file>...");
+                std::process::exit(2);
+            }
+            let mut failed = false;
+            for (n, path) in paths.iter().enumerate() {
+                let state = decoder::read_xmp_file(std::path::Path::new(path));
+                failed |= state.is_err();
+                if json {
+                    println!("{}", meta_json(path, &state));
+                    continue;
+                }
+                if paths.len() > 1 {
+                    if n > 0 {
+                        println!();
+                    }
+                    println!("== {path} ==");
+                }
+                let name = std::path::Path::new(path)
+                    .file_name()
+                    .map_or_else(|| path.clone(), |f| f.to_string_lossy().into_owned());
+                for line in decoder::describe_xmp(&name, &state, is_raw_codestream(path), decoder::XMP_COLUMNS) {
+                    println!("{line}");
+                }
+            }
+            if failed {
+                std::process::exit(1);
+            }
+        }
+        Some("attach-xmp") => {
+            // tools attach-xmp <in.jp2|in.j2c> <packet.xml> <out.jp2>: append an XMP packet to a JP2
+            // (wrapping a raw codestream first). For building test files.
+            let (input, xml, out) = (
+                args.next().expect("usage: tools attach-xmp <in> <packet.xml> <out.jp2>"),
+                args.next().expect("usage: tools attach-xmp <in> <packet.xml> <out.jp2>"),
+                args.next().expect("usage: tools attach-xmp <in> <packet.xml> <out.jp2>"),
+            );
+            let mut file = std::fs::read(&input).expect("read input");
+            if file.starts_with(&[0xFF, 0x4F]) {
+                let info = decoder::parse_info(&file).expect("parse codestream");
+                file = decoder::wrap_jp2(&file, info.width, info.height);
+            }
+            let packet = std::fs::read(&xml).expect("read packet");
+            let len = 8 + 16 + packet.len();
+            assert!(len <= u32::MAX as usize, "packet too large for a plain box");
+            file.extend_from_slice(&(len as u32).to_be_bytes());
+            file.extend_from_slice(b"uuid");
+            file.extend_from_slice(&decoder::XMP_UUID);
+            file.extend_from_slice(&packet);
+            std::fs::write(&out, &file).expect("write output");
+            println!("wrote {out} ({} bytes, XMP packet {} bytes)", file.len(), packet.len());
+        }
         Some("info") => {
             // tools info <file>...: what the viewer's Image info panel shows, for any number of files.
             let paths: Vec<String> = args.collect();
@@ -185,9 +248,70 @@ fn main() {
             check_regions(&png, &j2c);
         }
         _ => eprintln!(
-            "usage: tools bench <file> [runs] | verify <png> | encode <png> <j2c> | check <png> <j2c>"
+            "usage: tools info <file>... | meta [--json] <file>... | bench <file> [runs] | verify <png> | encode <png> <j2c> | check <png> <j2c> | attach-xmp <in> <packet.xml> <out.jp2>"
         ),
     }
+}
+
+/// True if the file starts with a bare codestream marker (no JP2 boxes).
+fn is_raw_codestream(path: &str) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 2];
+    std::fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut head))
+        .is_ok()
+        && head == [0xFF, 0x4F]
+}
+
+/// JSON string literal for `s` (quotes, backslashes and control characters escaped).
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// One JSON object (one line) for `tools meta --json`:
+/// `{"file": ..., "metadata": {"prefix:name": "value", ...} | null, "error": null | "message"}`.
+fn meta_json(path: &str, state: &Result<Option<decoder::XmpMetadata>, String>) -> String {
+    let (metadata, error) = match state {
+        Ok(Some(m)) => {
+            let fields: Vec<String> = m
+                .properties
+                .iter()
+                .map(|p| {
+                    let ns = if p.prefix.is_empty() {
+                        &p.namespace
+                    } else {
+                        &p.prefix
+                    };
+                    format!(
+                        "{}: {}",
+                        json_str(&format!("{ns}:{}", p.name)),
+                        json_str(&p.value)
+                    )
+                })
+                .collect();
+            (format!("{{{}}}", fields.join(", ")), "null".to_string())
+        }
+        Ok(None) => ("null".to_string(), "null".to_string()),
+        Err(e) => ("null".to_string(), json_str(e)),
+    };
+    format!(
+        "{{\"file\": {}, \"metadata\": {metadata}, \"error\": {error}}}",
+        json_str(path)
+    )
 }
 
 fn read_gray_png(path: &str) -> (u32, u32, Vec<u8>) {

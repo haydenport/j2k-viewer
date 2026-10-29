@@ -146,7 +146,7 @@ pub struct Inspection {
 }
 
 /// Boxes inside `bytes[start..end]`: `(type, payload_start, payload_end)`.
-fn boxes(bytes: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
+pub(crate) fn boxes(bytes: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
     let mut out = Vec::new();
     let end = end.min(bytes.len());
     let mut p = start;
@@ -238,6 +238,10 @@ fn parse_container(file: &[u8]) -> Result<(Container, usize), String> {
                     cs = Some(ps);
                 }
             }
+            // Say so when a `uuid` box carries XMP: the Metadata panel has content for this file.
+            b"uuid" if pe >= ps + 16 && file[ps..ps + 16] == crate::metadata::XMP_UUID => info
+                .other_boxes
+                .push(format!("uuid (XMP, {})", size_text((pe - ps - 16) as u64))),
             _ => info.other_boxes.push(tag(&kind)),
         }
     }
@@ -710,6 +714,11 @@ impl Inspection {
         } else {
             format!("Other markers: {}", other.join(", "))
         });
+        if let Container::Jp2(j) = &self.container {
+            if !j.other_boxes.is_empty() {
+                v.push(format!("Extra boxes: {}", j.other_boxes.join(", ")));
+            }
+        }
         let raw_bits: u64 = self
             .components
             .iter()
@@ -918,6 +927,32 @@ mod tests {
         let text = i.lines().join("\n");
         assert!(text.contains("JP2 wrapper, brand \"jp2 \""), "{text}");
         assert!(text.contains("Colour: greyscale"), "{text}");
+    }
+
+    #[test]
+    fn xmp_box_is_mentioned_in_the_extra_boxes_line() {
+        let cs = encode(200, 200, |_| {});
+        let mut jp2 = crate::wrap_jp2(&cs, 200, 200);
+        let packet = b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>";
+        let mut payload = crate::metadata::XMP_UUID.to_vec();
+        payload.extend_from_slice(packet);
+        jp2.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
+        jp2.extend_from_slice(b"uuid");
+        jp2.extend_from_slice(&payload);
+        let i = inspect(&jp2).unwrap();
+        let Container::Jp2(j) = &i.container else {
+            panic!("expected a JP2 container")
+        };
+        assert_eq!(j.other_boxes.len(), 1);
+        assert!(
+            j.other_boxes[0].starts_with("uuid (XMP, "),
+            "{:?}",
+            j.other_boxes
+        );
+        assert!(i.lines().join("\n").contains("Extra boxes: uuid (XMP, "));
+        // A file without extra boxes has no such line.
+        let plain = inspect(&crate::wrap_jp2(&cs, 200, 200)).unwrap();
+        assert!(!plain.lines().join("\n").contains("Extra boxes"));
     }
 
     #[test]

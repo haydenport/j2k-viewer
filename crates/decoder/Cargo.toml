@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 j2k = "0.12.0"
 memmap2 = "0.9.12"
+roxmltree = "0.21.2"

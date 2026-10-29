@@ -6,7 +6,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Instant;
 
-use decoder::{Inspection, J2kFile, TileDecoder};
+use decoder::{Inspection, J2kFile, TileDecoder, XmpMetadata};
 
 use crate::overlay;
 use crate::renderer::{GpuTile, Quad, Renderer};
@@ -41,6 +41,9 @@ struct Layer {
     overview: u8,
     tiles: HashMap<TileKey, Cached>,
     info: InfoState,
+    /// Embedded XMP metadata, read the first time the Metadata panel needs it for this layer
+    /// (a top-level box walk: well under a millisecond even for huge files).
+    meta: Option<Result<Option<XmpMetadata>, String>>,
 }
 
 /// Longest line the info panel shows before cutting it with "...".
@@ -68,12 +71,15 @@ pub struct Viewer {
     pub overlay: bool,
     /// Draw the image information panel (resolution, tiles, codec, markers, ...).
     pub info_panel: bool,
+    /// Draw the embedded metadata (XMP) panel.
+    pub meta_panel: bool,
     /// Pixel multiplier for overlay text.
     pub overlay_scale: u32,
     /// Draw the on-screen buttons (off for offscreen snapshots unless --overlay is given).
     pub show_buttons: bool,
     overlay_tile: Option<(Vec<String>, GpuTile)>,
     info_tile: Option<(Vec<String>, GpuTile)>,
+    meta_tile: Option<(Vec<String>, GpuTile)>,
     /// Finished file-structure scans, keyed by the address of the scanned file's `Arc`.
     info_tx: Sender<(usize, Result<Inspection, String>)>,
     info_rx: Receiver<(usize, Result<Inspection, String>)>,
@@ -96,6 +102,8 @@ pub enum UiAction {
     ToggleMenu,
     /// Show or hide the image information panel.
     ToggleInfo,
+    /// Show or hide the embedded metadata (XMP) panel.
+    ToggleMeta,
     /// Show or hide the debug statistics panel.
     ToggleDebug,
 }
@@ -112,6 +120,8 @@ struct Layout {
     panel_origin: Option<(f32, f32)>,
     /// Top-left of the image information panel, if it is shown.
     info_origin: Option<(f32, f32)>,
+    /// Top-left of the metadata panel, if it is shown.
+    meta_origin: Option<(f32, f32)>,
     buttons: Vec<Btn>,
 }
 
@@ -160,10 +170,12 @@ impl Viewer {
             prefetch: 1,
             overlay: false,
             info_panel: false,
+            meta_panel: false,
             overlay_scale: 1,
             show_buttons: true,
             overlay_tile: None,
             info_tile: None,
+            meta_tile: None,
             info_tx,
             info_rx,
             waker,
@@ -215,6 +227,7 @@ impl Viewer {
                         overview,
                         tiles: HashMap::new(),
                         info: InfoState::Idle,
+                        meta: None,
                     },
                 );
                 true
@@ -376,6 +389,7 @@ impl Viewer {
             }
         }
         self.poll_info();
+        self.poll_meta();
         if self.dirty {
             self.dirty = false;
             self.plan();
@@ -384,6 +398,20 @@ impl Viewer {
         // Let wgpu actually free textures dropped by eviction.
         let _ = self.renderer.device.poll(wgpu::PollType::Poll);
         more
+    }
+
+    /// Read the current layer's embedded metadata the first time the Metadata panel needs it.
+    /// Costs nothing while the panel is hidden. The read only walks the top-level boxes, so it is
+    /// done right here rather than on a thread.
+    fn poll_meta(&mut self) {
+        if !self.meta_panel {
+            return;
+        }
+        if let Some(layer) = self.layers.get_mut(&self.cur) {
+            if layer.meta.is_none() {
+                layer.meta = Some(layer.file.xmp());
+            }
+        }
     }
 
     /// Collect finished file-structure scans and start one for the current layer if the info panel
@@ -546,6 +574,7 @@ impl Viewer {
         let (rects, nearest) = self.draw_list();
         self.refresh_overlay();
         self.refresh_info();
+        self.refresh_meta();
         let layout = self.layout();
         self.ensure_button_tiles(&layout);
         let layer = self.layers.get(&self.cur);
@@ -566,6 +595,12 @@ impl Viewer {
             });
         }
         if let (Some((x, y)), Some((_, tile))) = (layout.info_origin, &self.info_tile) {
+            quads.push(Quad {
+                rect: [x, y, x + tile.w as f32, y + tile.h as f32],
+                tile,
+            });
+        }
+        if let (Some((x, y)), Some((_, tile))) = (layout.meta_origin, &self.meta_tile) {
             quads.push(Quad {
                 rect: [x, y, x + tile.w as f32, y + tile.h as f32],
                 tile,
@@ -626,6 +661,10 @@ impl Viewer {
                     format!("[{}] Image info    (I)", tick(self.info_panel)),
                 ),
                 (
+                    UiAction::ToggleMeta,
+                    format!("[{}] Metadata      (M)", tick(self.meta_panel)),
+                ),
+                (
                     UiAction::ToggleDebug,
                     format!("[{}] Debug stats   (D)", tick(self.overlay)),
                 ),
@@ -658,23 +697,47 @@ impl Viewer {
             Layout {
                 panel_origin: Some((((vw - pw) / 2.0).max(0.0).round(), top.round())),
                 info_origin: None,
+                meta_origin: None,
                 buttons,
             }
         } else {
+            let gap = 8.0 * sf;
+            let info_size = self
+                .info_panel
+                .then(|| overlay::text_size(&self.info_lines(), s));
+            let debug_size = self
+                .overlay
+                .then(|| overlay::text_size(&self.status_lines(), s));
+            let meta_size = self
+                .meta_panel
+                .then(|| overlay::text_size(&self.meta_lines(), s));
             // Left column: image info on top, debug statistics underneath it.
-            let info_h = if self.info_panel {
-                overlay::text_size(&self.info_lines(), s).1 as f32
-            } else {
-                0.0
+            let info_h = info_size.map_or(0.0, |z| z.1 as f32);
+            let debug_y = if self.info_panel { m + info_h + gap } else { m };
+            let left_bottom = match (info_size, debug_size) {
+                (_, Some(d)) => debug_y + d.1 as f32,
+                (Some(i), None) => m + i.1 as f32,
+                (None, None) => 0.0,
             };
-            let debug_y = if self.info_panel {
-                m + info_h + 8.0 * sf
-            } else {
-                m
-            };
+            let left_w = [info_size, debug_size]
+                .into_iter()
+                .flatten()
+                .map(|z| z.0 as f32)
+                .fold(0.0, f32::max);
+            // Metadata: top-right under the Menu button; if the window is too narrow to sit beside
+            // the left column, stack it below that column instead.
+            let meta_origin = meta_size.map(|(w, _)| {
+                let x = vw - m - w as f32;
+                if left_w == 0.0 || x >= m + left_w + gap {
+                    (x.max(0.0).round(), (m + mh + gap).round())
+                } else {
+                    (m, left_bottom + gap)
+                }
+            });
             Layout {
                 panel_origin: self.overlay.then_some((m, debug_y)),
                 info_origin: self.info_panel.then_some((m, m)),
+                meta_origin,
                 buttons,
             }
         }
@@ -707,6 +770,11 @@ impl Viewer {
             }
             UiAction::ToggleInfo => {
                 self.info_panel = !self.info_panel;
+                self.menu_open = false;
+                None
+            }
+            UiAction::ToggleMeta => {
+                self.meta_panel = !self.meta_panel;
                 self.menu_open = false;
                 None
             }
@@ -799,6 +867,43 @@ impl Viewer {
             .renderer
             .upload(&overlay::render_text(&lines, self.overlay_scale.max(1)));
         self.info_tile = Some((lines, tile));
+    }
+
+    /// Re-render the metadata panel texture only when its text changed.
+    fn refresh_meta(&mut self) {
+        if !self.meta_panel || self.is_empty_state() {
+            return;
+        }
+        let lines = self.meta_lines();
+        if self
+            .meta_tile
+            .as_ref()
+            .is_some_and(|(old, _)| *old == lines)
+        {
+            return;
+        }
+        let tile = self
+            .renderer
+            .upload(&overlay::render_text(&lines, self.overlay_scale.max(1)));
+        self.meta_tile = Some((lines, tile));
+    }
+
+    /// Text for the metadata panel: the XMP properties embedded in the current file.
+    pub fn meta_lines(&self) -> Vec<String> {
+        let name = self.current_name();
+        match self.layers.get(&self.cur) {
+            Some(Layer {
+                meta: Some(state),
+                file,
+                ..
+            }) => {
+                decoder::describe_xmp(&name, state, file.is_raw_codestream(), decoder::XMP_COLUMNS)
+            }
+            _ => vec![
+                format!("Metadata  {name}"),
+                "Reading metadata...".to_string(),
+            ],
+        }
     }
 
     /// Text for the image information panel: what the file *is* (not how the viewer is doing).

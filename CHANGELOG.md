@@ -1,5 +1,21 @@
 ﻿# Changelog
 
+## Unreleased
+
+* New **Metadata** panel (`M`, or Menu > Metadata): shows the XMP metadata embedded in the current
+  file (a JP2 `uuid` box), grouped by namespace in file order, values shown in full with wrapping.
+  It follows layer changes, costs nothing while hidden, and works for any XMP-tagged JP2. The three
+  info panels (Image info, Metadata, Debug stats) can be open at once; Metadata sits top-right under
+  the Menu button, or stacks in the left column in a narrow window.
+* `tools meta [--json] <file>...` prints the same metadata (text, or one JSON object per file);
+  `tools attach-xmp` builds test files with an embedded packet. `--meta` snapshot flag.
+* The XMP reader (`decoder::read_xmp`) walks only the top-level boxes, honours 32-bit, 64-bit and
+  run-to-end box lengths, merges multiple XMP boxes, handles attribute and element property forms
+  and `rdf:Seq`/`Bag`/`Alt` lists, rejects DTDs, caps packets at 16 MiB, and never panics on
+  damaged input.
+* Image info lists extra JP2 boxes, e.g. `Extra boxes: uuid (XMP, 2.0 KB)`.
+* Accented Latin letters (Latin-1) now render in the on-screen text instead of showing as `?`.
+
 ## 0.3.0
 
 * New **Image info** panel (`I`, or Menu > Image info): resolution, components and bit depth, JP2

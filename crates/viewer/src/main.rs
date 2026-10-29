@@ -56,10 +56,11 @@ usage: viewer [OPTIONS] [file-or-folder]
 With no file or folder the window opens empty; use the Open button (or the O key).
 
 Keys: Left/Right/PageUp/PageDown = previous/next layer, Home/End = first/last,
-      F = fit, 1 = 100%, +/- = zoom, I = image info panel, D = debug stats panel, O = open (pick
-      an image; its folder becomes the layer list), Shift+O = pick a folder directly, Esc = quit.
+      F = fit, 1 = 100%, +/- = zoom, I = image info panel, M = embedded metadata (XMP) panel,
+      D = debug stats panel, O = open (pick an image; its folder becomes the layer list),
+      Shift+O = pick a folder directly, Esc = quit.
 Mouse: wheel = zoom, left-drag or hold the wheel button = pan, Menu button (top right) = Open,
-image info and debug stats.
+image info, metadata and debug stats.
 
 options:
   --workers N        decode threads (default: cores/4, 2..6)
@@ -70,6 +71,7 @@ options:
   --zoom S           snapshot/bench: screen px per image px (default: fit / 0.25)
   --at X,Y           snapshot: image point at the centre of the view
   --info             snapshot: include the image info panel
+  --meta             snapshot: include the embedded metadata (XMP) panel
   --overlay          snapshot: include the debug stats panel and the Menu button
   --bench            benchmark layer stepping, panning and the cache on a folder
   --steps N          bench: layer steps per prefetch setting (default 6)
@@ -88,6 +90,7 @@ struct Args {
     prefetch: Option<usize>,
     overlay: bool,
     info: bool,
+    meta: bool,
     bench: bool,
     steps: Option<usize>,
     pan: Option<f64>,
@@ -123,6 +126,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--overlay" => a.overlay = true,
             "--info" => a.info = true,
+            "--meta" => a.meta = true,
             "--bench" => a.bench = true,
             "--snapshot" => a.snapshot = Some(value("--snapshot")?.into()),
             "--size" => {
@@ -322,6 +326,7 @@ fn run_snapshot(args: &Args, files: Vec<PathBuf>, index: usize) -> Result<(), St
     viewer.adapter_name = name;
     viewer.overlay = args.overlay;
     viewer.info_panel = args.info;
+    viewer.meta_panel = args.meta;
     viewer.show_buttons = args.overlay;
     viewer.overlay_scale = if size.0 >= 2500 { 2 } else { 1 };
     if let Some(p) = args.prefetch {
@@ -587,6 +592,7 @@ impl App {
                 "f" | "F" => g.viewer.fit(),
                 "1" => g.viewer.actual_size(),
                 "i" | "I" => g.viewer.info_panel = !g.viewer.info_panel,
+                "m" | "M" => g.viewer.meta_panel = !g.viewer.meta_panel,
                 "d" | "D" => g.viewer.overlay = !g.viewer.overlay,
                 "+" | "=" => g.viewer.zoom_at(cx, cy, 1.25),
                 "-" | "_" => g.viewer.zoom_at(cx, cy, 0.8),

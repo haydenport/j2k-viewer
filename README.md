@@ -58,11 +58,12 @@ Opening a file makes its folder the layer list; a folder opens directly.
 | `O` | open a file (its folder becomes the layer list) |
 | `Shift+O` | pick a folder directly |
 | `I` | toggle the **image info** panel (see below) |
+| `M` | toggle the embedded **metadata** (XMP) panel (see below) |
 | `D` | toggle the debug statistics panel (cache, decode times, frame time) |
 | `Esc` | quit |
 | Mouse wheel | zoom at the cursor |
 | Left-drag, or hold the middle (wheel) button | pan |
-| Menu button (top right) | Open, image info, debug stats |
+| Menu button (top right) | Open, image info, metadata, debug stats |
 | Drop a file or folder on the window | open it |
 
 ### Image info panel
@@ -83,12 +84,42 @@ reads the structure only, so it is quick even for huge files, and it runs in the
 
 `tools info <file>...` prints the same text on the command line.
 
+### Metadata panel
+
+Press `M` (or Menu > Metadata) to show the **XMP metadata embedded in the file**: part names, build
+and layer identifiers, timestamps, serial numbers, software versions, camera settings, or whatever
+else the software that wrote the file stored. It is standard XMP in a JP2 `uuid` box (Adobe XMP
+specification, part 3), so it works for any XMP-tagged JP2, and it shows whatever properties are
+present without a fixed field list.
+
+* Properties are grouped by XMP namespace, titled by the prefix the file uses (for example
+  `XMP (dc)`), and kept in the order they appear in the file. Values are shown in full: long values
+  wrap onto indented continuation lines, and multi-line values are split into lines. Accented Latin
+  letters display; other non-Latin characters show as `?`.
+* The panel follows you from layer to layer. A file without metadata says "No embedded metadata";
+  an unreadable packet says why.
+* It sits top-right under the Menu button, or stacks under the left-hand panels when the window is
+  too narrow. It can be open together with Image info (`I`) and Debug stats (`D`).
+* Reading it only walks the file's top-level boxes, so it costs nothing while hidden and is instant
+  on huge files. DTDs are rejected and packets over 16 MiB are refused.
+* The bitmap text cannot be selected, so to copy a value use the command line:
+
+```
+tools meta <file>...            # same text as the panel
+tools meta --json <file>...     # one JSON object per line: {"file", "metadata": {"prefix:name": value} | null, "error"}
+```
+
+  The exit code is 0 when every file could be read (including "no metadata") and 1 if a file could
+  not be opened or its XMP is unreadable. For checking, compare with `exiftool -XMP:all <file>`.
+* `viewer --snapshot out.png --meta file.jp2` renders the panel offscreen.
+
 ### Other modes
 
 ```
 viewer --snapshot out.png --zoom 1 --at 23552,19688 file.j2c   # offscreen render, no window
 viewer --bench <folder> [--steps N --pan N --cache-mb N]        # layer step / pan / cache benchmark
 tools info <file>...                                             # the image info panel's text, for any files
+tools meta [--json] <file>...                                    # embedded XMP metadata, as text or JSON
 tools bench|verify|encode|check|mktest|cmp-snapshot ...          # decoder benchmarks and checks
 ```
 

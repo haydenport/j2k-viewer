@@ -1,7 +1,7 @@
 //! Status text rendered on the CPU into a grayscale panel, drawn as one more tile-style quad.
 
 use decoder::Gray8Buf;
-use font8x8::{UnicodeFonts, BASIC_FONTS};
+use font8x8::{UnicodeFonts, BASIC_FONTS, LATIN_FONTS};
 
 const PANEL: u8 = 28;
 const INK: u8 = 255;
@@ -28,7 +28,12 @@ pub fn render_styled(lines: &[String], scale: u32, background: u8) -> Gray8Buf {
     let mut data = vec![background; (w * h) as usize];
     for (row, line) in lines.iter().enumerate() {
         for (col, ch) in line.chars().enumerate() {
-            let Some(glyph) = BASIC_FONTS.get(if ch.is_ascii() { ch } else { '?' }) else {
+            // ASCII, then Latin-1 letters (accented names in metadata), else a question mark.
+            let Some(glyph) = BASIC_FONTS
+                .get(ch)
+                .or_else(|| LATIN_FONTS.get(ch))
+                .or_else(|| BASIC_FONTS.get('?'))
+            else {
                 continue;
             };
             let (ox, oy) = (
@@ -83,6 +88,22 @@ mod tests {
         assert!(ink > 5);
         let blank = render_text(&[" ".into()], 1);
         assert!(blank.data.iter().all(|&p| p == PANEL));
+    }
+
+    #[test]
+    fn latin_letters_get_their_own_glyph_and_others_a_question_mark() {
+        let px = |s: &str| render_text(&[s.to_string()], 1).data;
+        assert_ne!(
+            px("é"),
+            px("?"),
+            "e-acute should not render as a question mark"
+        );
+        assert_ne!(px("é"), px("e"));
+        assert_eq!(
+            px("✓"),
+            px("?"),
+            "characters with no glyph fall back to '?'"
+        );
     }
 
     #[test]

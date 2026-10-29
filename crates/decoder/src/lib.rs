@@ -1,9 +1,13 @@
 //! Decoder abstraction so HTJ2K backends can be swapped, plus the `j2k` (pure Rust, CPU) backend.
 
 mod inspect;
+mod metadata;
 
 pub use inspect::{
     inspect, Cod, Colour, Component, Container, Inspection, Jp2Info, Markers, Qcd, TileParts,
+};
+pub use metadata::{
+    describe_xmp, read_xmp, read_xmp_file, XmpMetadata, XmpProperty, XMP_COLUMNS, XMP_UUID,
 };
 
 use std::fs::File;
@@ -73,6 +77,16 @@ impl J2kFile {
     /// touches the whole file; call it off the UI thread.
     pub fn inspect(&self) -> Result<Inspection, String> {
         inspect(&self.map)
+    }
+
+    /// Embedded XMP metadata. Only walks the top-level boxes, so it is cheap even on huge files.
+    pub fn xmp(&self) -> Result<Option<XmpMetadata>, String> {
+        read_xmp(&self.map)
+    }
+
+    /// True for a bare codestream (`.j2c` / `.j2k`) with no JP2 boxes around it.
+    pub fn is_raw_codestream(&self) -> bool {
+        self.offset == 0
     }
 
     fn codestream(&self) -> &[u8] {
