@@ -1,6 +1,6 @@
 ﻿# Changelog
 
-## Unreleased
+## 0.4.0
 
 * New **Metadata** panel (`M`, or Menu > Metadata): shows the XMP metadata embedded in the current
   file (a JP2 `uuid` box), grouped by namespace in file order, values shown in full with wrapping.
